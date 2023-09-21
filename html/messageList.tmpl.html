@@ -1,0 +1,19 @@
+<table>
+  <th>topic</th>
+  <th>since</th>
+  <th>id</th>
+  <th>flags</th>
+  <th>payload</th>
+  {{ range . }}
+    <tr>
+      <td><a href="/topic?topic={{ .Topic }}">{{ .Topic  }}</a></td>
+      <td>{{ .TimeSince  }}</td>
+      <td>{{ .MessageID  }}</td>
+      <td>
+        {{ if .Duplicate }}D{{ end }}
+        {{ if .Retained }}R{{ end }}
+      </td>
+      <td><code>{{ printf "%s" .Payload }}</code></td>
+    </tr>
+  {{ end }}
+</table>

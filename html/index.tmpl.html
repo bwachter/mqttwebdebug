@@ -1,0 +1,14 @@
+<h1><a href="/">mqttwebdebug</a></h1>
+
+<h2>view topic</h2>
+<form style="display: inline" action="/topic" method="get">
+  <select name="topic" onchange="this.form.submit();">
+    {{ range .AllTopics }}
+      <option value="{{ .Topic }}">{{ .Topic }}</option>
+    {{ end }}
+  </select>
+  <input type="submit" value="View">
+</form>
+
+<h2>last messages (global)</h2>
+{{ template "messageList" .AllMessages }}
