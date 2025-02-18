@@ -5,11 +5,14 @@ import (
 	_ "embed"
 	"flag"
 	"fmt"
+	"gopkg.in/yaml.v2"
 	"html/template"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"path"
 	"sort"
 	"sync"
 	"time"
@@ -18,18 +21,20 @@ import (
 	"golang.org/x/net/trace"
 )
 
+type ConfigData struct {
+	HTTP_host     string `yaml:"http_host"`
+	HTTP_port     string `yaml:"http_port"`
+	MQTT_port     string `yaml:"mqtt_port"`
+	MQTT_host     string `yaml:"mqtt_host"`
+	MQTT_user     string `yaml:"mqtt_user"`
+	MQTT_password string `yaml:"mqtt_password"`
+}
+
 var (
-	listenAddress = flag.String("listen",
-		":9383",
-		"listen address for HTTP API")
-
-	mqttBroker = flag.String("mqtt_broker",
-		"tcp://localhost:1883",
-		"MQTT broker address for github.com/eclipse/paho.mqtt.golang")
-
-	mqttTopic = flag.String("mqtt_topic",
-		"#",
-		"MQTT topic to match on")
+	configData    ConfigData
+	listenAddress *string
+	mqttBroker    *string
+	mqttTopic     *string
 
 	//go:embed html/index.tmpl.html
 	indexTemplate string
@@ -134,6 +139,65 @@ type FlatMessage struct {
 	Retained  bool
 	MessageID uint16
 	Payload   []byte
+}
+
+func readConfig() {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		fmt.Println("Unable to determine user config dir, falling back to /etc")
+		configDir = "/etc"
+	}
+
+	executableName, err := os.Executable()
+	configFileName := fmt.Sprintf("%s.yml",
+		path.Base(executableName))
+	userConfigPath := fmt.Sprintf("%s/%s", configDir, configFileName)
+	sysConfigPath := fmt.Sprintf("%s/%s", "/etc", configFileName)
+	activeConfig := userConfigPath
+
+	_, err = os.Stat(userConfigPath)
+	if os.IsNotExist(err) {
+		activeConfig = sysConfigPath
+		_, err = os.Stat(sysConfigPath)
+		if os.IsNotExist(err) {
+			activeConfig = ""
+			log.Printf("No configuration found, tried: " +
+				userConfigPath + ", " + sysConfigPath)
+		}
+	}
+
+	if activeConfig != "" {
+		configFile, err := ioutil.ReadFile(activeConfig)
+		if err != nil {
+			log.Printf("Error reading configuration file #%v ", err)
+		}
+
+		err = yaml.Unmarshal(configFile, &configData)
+		if err != nil {
+			log.Fatalf("Error during Unmarshal: %v", err)
+		}
+
+		err = yaml.Unmarshal(configFile, &configData)
+		if err != nil {
+			log.Fatalf("Error during Unmarshal: %v", err)
+		}
+	}
+
+	if configData.HTTP_host == "" {
+		configData.HTTP_host = "0.0.0.0"
+	}
+
+	if configData.HTTP_port == "" {
+		configData.HTTP_port = "9383"
+	}
+
+	if configData.MQTT_port == "" {
+		configData.MQTT_port = "1883"
+	}
+
+	if configData.MQTT_host == "" {
+		configData.MQTT_host = "localhost"
+	}
 }
 
 func flattenLastMessages(msgs []*TopicMessage) []FlatMessage {
@@ -287,6 +351,14 @@ func mqttwebdebug() error {
 	ctrl := &debugController{topics: make(map[string]*TopicRepository)}
 
 	opts := mqtt.NewClientOptions().AddBroker(*mqttBroker)
+	if configData.MQTT_user != "" {
+		opts.SetUsername(configData.MQTT_user)
+	}
+
+	if configData.MQTT_password != "" {
+		opts.SetPassword(configData.MQTT_password)
+	}
+
 	clientID := "https://github.com/rburchell/mqttwebdebug"
 	if hostname, err := os.Hostname(); err == nil {
 		clientID += "@" + hostname
@@ -301,6 +373,7 @@ func mqttwebdebug() error {
 	mqttClient := mqtt.NewClient(opts)
 	ctrl.mqttClient = mqttClient // no need to lock; we aren't accepting requests yet.
 
+	log.Printf("HTTP server on %s", *listenAddress)
 	log.Printf("connecting to mqtt broker %s", *mqttBroker)
 	if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
 		return fmt.Errorf("MQTT connection failed: %v", token.Error())
@@ -324,7 +397,24 @@ func mqttwebdebug() error {
 }
 
 func main() {
+	readConfig()
+
+	listenAddress = flag.String("listen",
+		configData.HTTP_host+":"+configData.HTTP_port,
+		"listen address for HTTP API")
+
+	mqttBroker = flag.String("mqtt_broker",
+		fmt.Sprintf("tcp://%s:%s",
+			configData.MQTT_host,
+			configData.MQTT_port),
+		"MQTT broker address for github.com/eclipse/paho.mqtt.golang")
+
+	mqttTopic = flag.String("mqtt_topic",
+		"#",
+		"MQTT topic to match on")
+
 	flag.Parse()
+
 	if err := mqttwebdebug(); err != nil {
 		log.Fatal(err)
 	}
